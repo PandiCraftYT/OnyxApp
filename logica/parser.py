@@ -1,39 +1,66 @@
 import os
-import re
+import sys
+
+def obtener_ruta_recurso(relativa):
+    """ 
+    Obtiene la ruta absoluta para recursos, compatible con PyInstaller.
+    """
+    try:
+        base = sys._MEIPASS
+    except Exception:
+        base = os.path.abspath(".")
+    return os.path.join(base, relativa)
 
 def cargar_canales():
-    path = "data.js"
-    if not os.path.exists(path): return []
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            contenido = f.read()
-            # Buscar contenido entre backticks ` ` o comillas " "
-            match = re.search(r'`(.*?)`', contenido, re.DOTALL)
-            if not match: match = re.search(r'"(.*?)"', contenido, re.DOTALL)
-            
-            if match: 
-                return parse_m3u(match.group(1))
-            return []
-    except Exception as e:
-        print(f"Error parseando: {e}")
+    # Usamos el nombre del archivo que tienes en tu carpeta
+    nombre_archivo = "data.js" # O "data.java" según corresponda exactamente
+    ruta = obtener_ruta_recurso(nombre_archivo)
+    
+    canales = []
+    
+    if not os.path.exists(ruta):
+        print(f"Error: No se encontró el archivo de datos en: {ruta}")
         return []
 
-def parse_m3u(content):
-    lines = content.split('\n')
-    channels = []
-    name = "Sin Nombre"
-    logo = ""
-    
-    for line in lines:
-        line = line.strip()
-        if line.startswith("#EXTINF"):
-            parts = line.split(',')
-            name = parts[-1].strip()
-            # Intentar sacar el logo
-            logo_match = re.search(r'tvg-logo="([^"]+)"', line)
-            logo = logo_match.group(1) if logo_match else ""
-        elif line and not line.startswith("#"):
-            channels.append({"name": name, "url": line, "logo": logo})
-            name = "Sin Nombre"
-    return channels
+    try:
+        # Abrimos el archivo con 'latin-1' o 'utf-8' para evitar errores de símbolos
+        with open(ruta, 'r', encoding='utf-8', errors='ignore') as f:
+            contenido = f.readlines()
+            
+        canal_actual = {}
+        for linea in contenido:
+            linea = linea.strip()
+            
+            # Buscamos la información del canal dentro del archivo de texto
+            if "#EXTINF:" in linea:
+                # Extraer nombre (lo que está después de la última coma)
+                if "," in linea:
+                    canal_actual['name'] = linea.split(",")[-1].strip()
+                
+                # Extraer logo (tvg-logo="...")
+                if 'tvg-logo="' in linea:
+                    inicio = linea.find('tvg-logo="') + 10
+                    fin = linea.find('"', inicio)
+                    canal_actual['logo'] = linea[inicio:fin]
+                else:
+                    canal_actual['logo'] = ""
+                    
+            # Buscamos la URL (líneas que contienen http)
+            elif "http" in linea and ('name' in canal_actual):
+                # Limpiamos la línea por si hay comillas de JavaScript o Java
+                url = linea.replace('"', '').replace("'", "").replace(";", "").replace(",", "").strip()
+                # Si la línea tiene espacios, tomamos la primera palabra que sea la URL
+                for palabra in url.split():
+                    if palabra.startswith("http"):
+                        canal_actual['url'] = palabra
+                        break
+                
+                if 'url' in canal_actual:
+                    canales.append(canal_actual)
+                    canal_actual = {} # Reiniciar para el siguiente
+                
+        return canales
+
+    except Exception as e:
+        print(f"Error crítico al leer el archivo de canales: {e}")
+        return []
