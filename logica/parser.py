@@ -12,8 +12,8 @@ def obtener_ruta_recurso(relativa):
     return os.path.join(base, relativa)
 
 def cargar_canales():
-    # Usamos el nombre del archivo que tienes en tu carpeta
-    nombre_archivo = "data.js" # O "data.java" según corresponda exactamente
+    # Buscamos el archivo de datos en la raíz o dentro del .exe
+    nombre_archivo = "data.js" 
     ruta = obtener_ruta_recurso(nombre_archivo)
     
     canales = []
@@ -23,7 +23,7 @@ def cargar_canales():
         return []
 
     try:
-        # Abrimos el archivo con 'latin-1' o 'utf-8' para evitar errores de símbolos
+        # Usamos errors='ignore' para que caracteres extraños no traben la carga
         with open(ruta, 'r', encoding='utf-8', errors='ignore') as f:
             contenido = f.readlines()
             
@@ -31,13 +31,12 @@ def cargar_canales():
         for linea in contenido:
             linea = linea.strip()
             
-            # Buscamos la información del canal dentro del archivo de texto
             if "#EXTINF:" in linea:
-                # Extraer nombre (lo que está después de la última coma)
+                # Extraer nombre
                 if "," in linea:
                     canal_actual['name'] = linea.split(",")[-1].strip()
                 
-                # Extraer logo (tvg-logo="...")
+                # Extraer logo
                 if 'tvg-logo="' in linea:
                     inicio = linea.find('tvg-logo="') + 10
                     fin = linea.find('"', inicio)
@@ -45,19 +44,18 @@ def cargar_canales():
                 else:
                     canal_actual['logo'] = ""
                     
-            # Buscamos la URL (líneas que contienen http)
             elif "http" in linea and ('name' in canal_actual):
-                # Limpiamos la línea por si hay comillas de JavaScript o Java
-                url = linea.replace('"', '').replace("'", "").replace(";", "").replace(",", "").strip()
-                # Si la línea tiene espacios, tomamos la primera palabra que sea la URL
-                for palabra in url.split():
+                # Limpiamos basura de JS/Java para obtener la URL pura
+                url_sucia = linea.replace('"', '').replace("'", "").replace(";", "").replace(",", "").strip()
+                
+                for palabra in url_sucia.split():
                     if palabra.startswith("http"):
                         canal_actual['url'] = palabra
                         break
                 
                 if 'url' in canal_actual:
                     canales.append(canal_actual)
-                    canal_actual = {} # Reiniciar para el siguiente
+                    canal_actual = {} 
                 
         return canales
 

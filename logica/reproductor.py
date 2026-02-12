@@ -1,66 +1,106 @@
 import os
 import sys
 import vlc
+from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 # --- CONFIGURACIÓN DE RUTAS VLC ---
-# Buscamos donde está instalado VLC para que Python lo encuentre sin errores
-VLC_PATH = r"C:\Program Files\VideoLAN\VLC"
-if os.path.exists(VLC_PATH):
+VLC_PATH = os.path.abspath(".")
+if os.path.exists(os.path.join(VLC_PATH, "libvlc.dll")):
     os.add_dll_directory(VLC_PATH)
-    os.environ['PYTHON_VLC_MODULE_PATH'] = VLC_PATH
+else:
+    VLC_STD = r"C:\Program Files\VideoLAN\VLC"
+    if os.path.exists(VLC_STD):
+        os.add_dll_directory(VLC_STD)
 
-class VideoEngine:
+class VideoEngine(QObject):
+    reintentar_signal = pyqtSignal()
+
     def __init__(self):
-        # --- CAMUFLAJE NIVEL MILITAR ---
-        # Argumentos para que el servidor crea que somos Google Chrome y no bloquee
+        super().__init__()
+        
+        # --- CONFIGURACIÓN OPTIMIZADA PARA BAJOS RECURSOS ---
         mis_argumentos = [
             "--quiet",
             "--no-xlib",
-            "--network-caching=1500",   # 1.5 segundos de buffer (Mayor estabilidad)
-            "--http-reconnect",         # Reconectar automáticamente si parpadea la red
-            # User-Agent de Chrome en Windows 10
+            "--no-video-title-show",
+            "--no-stats",                 # Ahorra CPU desactivando estadísticas
+            "--skip-frames",              # Salta cuadros si la CPU va lenta
+            "--drop-late-frames",         # Descarta video atrasado para no congelarse
+            "--avcodec-hw=any",           # Usa la GPU si existe, si no, usa CPU eficientemente
+            "--network-caching=1500",     # 1.5s: Equilibrio perfecto entre rapidez y estabilidad
+            
+            # Camuflaje estándar
             "--http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         ]
 
         self.instance = vlc.Instance(mis_argumentos)
-        self.player = self.instance.media_player_new()
+        
+        # Rescate si falla la inicialización
+        if not self.instance:
+            self.instance = vlc.Instance()
 
-        # --- TRUCO MAESTRO PARA PYQT6 ---
-        # Le decimos a VLC: "Ignora el mouse y el teclado".
-        # De esta forma, los clics y movimientos "atraviesan" el video y llegan a nuestra App.
-        # Esto permite que el doble clic y el detector de movimiento funcionen.
+        self.player = self.instance.media_player_new()
+        
+        self.ultima_url = None
+        self.ultimo_win_id = None
+        
+        self.reintentar_signal.connect(self._ejecutar_reintento_seguro)
+        
+        self.events = self.player.event_manager()
+        self.events.event_attach(vlc.EventType.MediaPlayerEncounteredError, self._manejador_errores)
+        self.events.event_attach(vlc.EventType.MediaPlayerOpening, self._log_estado)
+        self.events.event_attach(vlc.EventType.MediaPlayerBuffering, self._log_estado)
+
         self.player.video_set_mouse_input(False)
         self.player.video_set_key_input(False)
 
-    def reproducir(self, url, win_id):
-        self.player.stop()
+    def _log_estado(self, event):
+        # Logs mínimos para no saturar consola
+        pass 
 
-        # Crear el objeto multimedia
+    def _manejador_errores(self, event):
+        print("❌ Reintentando conexión...")
+        self.reintentar_signal.emit()
+
+    def _ejecutar_reintento_seguro(self):
+        if self.ultima_url:
+            QTimer.singleShot(2000, lambda: self.reproducir(self.ultima_url, self.ultimo_win_id))
+
+    def reproducir(self, url, win_id):
+        self.ultima_url = url
+        self.ultimo_win_id = win_id
+        
+        self.player.stop()
         media = self.instance.media_new(url)
 
-        # DOBLE SEGURIDAD: Forzamos el camuflaje también en el archivo individual
-        media.add_option(":http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-        media.add_option(":http-reconnect=true")
+        # Opciones críticas para evitar bloqueos
         media.add_option(":network-caching=1500")
+        media.add_option(":http-reconnect=true")
+        media.add_option(":http-continuous=1")
+        media.add_option(":http-ssl-verify=0") 
+        media.add_option(":avcodec-hw=any") 
+        
+        # Headers necesarios
+        media.add_option(":http-forward-cookies=1")
+        media.add_option(":http-referrer=https://mdstrm.com/") 
+        media.add_option(":http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
 
         self.player.set_media(media)
 
-        # Conectar el video a la ventana negra de PyQt (Windows o Linux)
-        if sys.platform.startswith("linux"):
-            self.player.set_xwindow(win_id)
-        elif sys.platform.startswith("win"):
+        if sys.platform.startswith("win"):
             self.player.set_hwnd(win_id)
+        elif sys.platform.startswith("linux"):
+            self.player.set_xwindow(win_id)
 
         self.player.play()
 
-    def toggle_pause(self):
-        """Pausa o reanuda y devuelve True si está reproduciendo"""
-        if self.player.is_playing():
-            self.player.pause()
-            return False # Está en Pausa
-        else:
-            self.player.play()
-            return True # Está Reproduciendo
-
     def set_volume(self, val):
         self.player.audio_set_volume(int(val))
+
+    def toggle_pause(self):
+        if self.player.is_playing():
+            self.player.pause()
+            return False 
+        else:
+            self.player.play()
+            return True
